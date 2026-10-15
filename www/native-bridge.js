@@ -20,10 +20,10 @@
             localStorage.setItem('sj_last_ip', r.ip + ':' + (r.port || 8080));
             localStorage.setItem('sj_last_pin', r.pin || '');
           } catch (_) {}
-          // same-origin when WebView loads via http://127.0.0.1:8080 (friends use hotspot IP),
-          // otherwise explicit base for file:///android_asset / capacitor://localhost
-          const probeBase = '';
-          return { base: probeBase, ip: r.ip, port: r.port || 8080, pin: r.pin || '', native: true };
+          // Host API lives on the embedded JamService at 127.0.0.1 — never same-origin
+          // (Capacitor's own WebView server would return index.html for /api/*).
+          const base = 'http://127.0.0.1:' + (r.port || 8080);
+          return { base: base, ip: r.ip, port: r.port || 8080, pin: r.pin || '', native: true };
         }
       } catch (e) { /* fall through to web */ }
     }
@@ -45,5 +45,17 @@
     return null;
   }
 
-  window.SongJamBridge = { isNative, hasBridge, ensureServer, listNativeSongs };
+  async function requestPermissions() {
+    try {
+      if (window.SongJamNative && window.SongJamNative.requestPermissions) {
+        let r = window.SongJamNative.requestPermissions();
+        if (r && typeof r.then === 'function') r = await r;
+        if (typeof r === 'string') { try { r = JSON.parse(r); } catch (_) {} }
+        return r;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  window.SongJamBridge = { isNative, hasBridge, ensureServer, listNativeSongs, requestPermissions };
 })();

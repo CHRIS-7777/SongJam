@@ -70,8 +70,10 @@ async function loadInfo(){
     $('jamAddr').textContent = `${info.ip}:${info.port}`;
     $('jamPin').textContent = info.pin;
     pin = info.pin;
+    window.__SJ_PERM = (info.audioPerm !== false);
     $('livePill').classList.add('on');
     $('liveTxt').textContent = `${info.songs} songs`;
+    if(mode === 'host' && !songs.length) renderSongs(songs);
   }catch(e){ $('jamAddr').textContent = 'server offline'; }
 }
 async function loadSongs(){
@@ -87,6 +89,17 @@ async function loadSongs(){
 }
 function renderSongs(list){
   if(!list.length){
+    const needGrant = !!(window.SongJamBridge && window.SongJamBridge.isNative && window.__SJ_PERM === false);
+    if(needGrant){
+      $('songList').innerHTML = `<div class="empty"><div class="big">🔒</div>songjam needs access to your music to list songs.<br/><br/><button class="btn primary" id="grantBtn" style="max-width:260px">Allow music access</button><div class="hint">Tap Allow on the system popup, then your songs appear here.</div></div>`;
+      const gb = $('grantBtn');
+      if(gb) gb.onclick = async ()=>{
+        gb.textContent = 'Waiting for permission…'; gb.disabled = true;
+        try{ await window.SongJamBridge.requestPermissions(); }catch(e){}
+        setTimeout(async ()=>{ await loadInfo(); await loadSongs(); }, 1200);
+      };
+      return;
+    }
     $('songList').innerHTML = `<div class="empty"><div class="big">🎧</div>No songs on this device yet.<br/>Tap <b>🔴 Stream a song from my phone</b> and pick any audio file — it goes live for everyone.</div>`;
     return;
   }

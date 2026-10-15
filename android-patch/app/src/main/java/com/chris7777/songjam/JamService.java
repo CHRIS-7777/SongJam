@@ -22,6 +22,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -140,7 +141,60 @@ public class JamService extends Service {
                 out.add(new Song(String.valueOf(id), stem, dn, sz));
             }
         } catch (Exception ignored) {}
+        // uploads via POST /api/share (streamed by id "shared/<name>")
+        try {
+            File dir = new File(getFilesDir(), "shared");
+            File[] fs = dir.listFiles();
+            if (fs != null) {
+                java.util.Arrays.sort(fs);
+                for (File f : fs) {
+                    if (!f.isFile()) continue;
+                    String dn = f.getName();
+                    String stem = dn.contains(".") ? dn.substring(0, dn.lastIndexOf('.')) : dn;
+                    out.add(new Song("shared/" + dn, stem, dn, f.length()));
+                }
+            }
+        } catch (Exception ignored) {}
         return out;
+    }
+
+    boolean hasAudioPerm() {
+        try {
+            if (Build.VERSION.SDK_INT >= 33) {
+                return checkSelfPermission(android.Manifest.permission.READ_MEDIA_AUDIO)
+                        == android.content.pm.PackageManager.PERMISSION_GRANTED;
+            }
+            return checkSelfPermission(android.Manifest.permission.READ_EXTERNAL_STORAGE)
+                    == android.content.pm.PackageManager.PERMISSION_GRANTED;
+        } catch (Exception e) { return false; }
+    }
+
+    static Map<String, String> queryParams(String q) {
+        Map<String, String> m = new HashMap<>();
+        if (q == null) return m;
+        for (String kv : q.split("&")) {
+            if (kv.isEmpty()) continue;
+            int i = kv.indexOf('=');
+            try {
+                if (i > 0) m.put(java.net.URLDecoder.decode(kv.substring(0, i), "UTF-8"),
+                        java.net.URLDecoder.decode(kv.substring(i + 1), "UTF-8"));
+                else m.put(java.net.URLDecoder.decode(kv, "UTF-8"), "");
+            } catch (Exception ignored) {}
+        }
+        return m;
+    }
+
+    static byte[] readBody(InputStream in, long len) throws java.io.IOException {
+        ByteArrayOutputStream bos = new ByteArrayOutputStream();
+        byte[] buf = new byte[8192];
+        long left = len;
+        while (left > 0) {
+            int n = in.read(buf, 0, (int) Math.min(buf.length, left));
+            if (n < 0) break;
+            bos.write(buf, 0, n);
+            left -= n;
+        }
+        return bos.toByteArray();
     }
 
     static class JamHttpd extends NanoHTTPD {
@@ -155,6 +209,7 @@ public class JamService extends Service {
                     JSONObject o = new JSONObject();
                     o.put("ip", hotspotIp()); o.put("port", PORT); o.put("pin", PIN);
                     o.put("songs", svc.querySongs().size());
+                    o.put("audioPerm", svc.hasAudioPerm());
                     return json(o);
                 }
                 if (uri.equals("/api/songs")) {
@@ -191,10 +246,35 @@ public class JamService extends Service {
                     }
                     return json(new JSONObject().put("ok", true));
                 }
+                if (uri.equals("/api/share") && (m == Method.POST || m == Method.PUT)) {
+                    Map<String, String> qp = queryParams(s.getQueryParameterString());
+                    if (!PIN.equals(qp.get("pin"))) return jsonErr("wrong pin", 403);
+                    String fname = qp.get("filename");
+                    if (fname == null || fname.isEmpty()) fname = "shared-track.mp3";
+                    fname = new File(fname).getName();
+                    if (fname.isEmpty()) fname = "shared-track.mp3";
+                    long cl = 0;
+                    try { cl = Long.parseLong(s.getHeaders().get("content-length")); } catch (Exception ignored) {}
+                    if (cl <= 0 || cl > 100 * 1024 * 1024) return jsonErr("empty or >100MB", 400);
+                    byte[] data = readBody(s.getInputStream(), cl);
+                    if (data.length == 0) return jsonErr("empty upload", 400);
+                    File dir = new File(svc.getFilesDir(), "shared");
+                    //noinspection ResultOfMethodCallIgnored
+                    dir.mkdirs();
+                    File dest = new File(dir, fname);
+                    if (dest.exists()) dest = new File(dir, System.currentTimeMillis() + "-" + fname);
+                    try {
+                        OutputStream out = new java.io.FileOutputStream(dest);
+                        out.write(data);
+                        out.close();
+                    } catch (Exception e) { return jsonErr("write failed", 500); }
+                    return json(new JSONObject().put("ok", true).put("id", "shared/" + dest.getName()));
+                }
                 if (uri.startsWith("/stream/") && m == Method.GET) {
                     String id = uri.substring("/stream/".length());
                     return serveTrack(id, s.getHeaders().get("range"));
                 }
+                if (uri.startsWith("/api/")) return jsonErr("not found", 404);
                 return serveAsset(uri);
             } catch (Exception e) {
                 return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "err");
@@ -211,13 +291,33 @@ public class JamService extends Service {
             r.addHeader("Access-Control-Allow-Origin", "*");
             return r;
         }
-        Response serveTrack(String id, String range) {
-            try {
-                Uri cu = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, Long.parseLong(id));
-                ParcelFileDescriptor pfd = svc.getContentResolver().openFileDescriptor(cu, "r");
-                long size = pfd.getStatSize();
-                String mime = svc.getContentResolver().getType(cu);
-                if (mime == null) mime = "audio/mpeg";
+        static String mimeFor(String name) {
+            String n = name.toLowerCase();
+            if (n.endsWith(".m4a")) return "audio/mp4";
+            if (n.endsWith(".opus") || n.endsWith(".ogg")) return "audio/ogg";
+            if (n.endsWith(".wav")) return "audio/wav";
+            if (n.endsWith(".flac")) return "audio/flac";
+            return "audio/mpeg";
+        }
+        Response serveTrack(String id, String range) {            try {
+                InputStream in;
+                long size;
+                String mime;
+                if (id.startsWith("shared/")) {
+                    File f = new File(new File(svc.getFilesDir(), "shared"),
+                            new File(id.substring("shared/".length())).getName());
+                    if (!f.isFile()) return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found");
+                    size = f.length();
+                    mime = mimeFor(f.getName());
+                    in = new java.io.FileInputStream(f);
+                } else {
+                    Uri cu = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, Long.parseLong(id));
+                    ParcelFileDescriptor pfd = svc.getContentResolver().openFileDescriptor(cu, "r");
+                    size = pfd.getStatSize();
+                    mime = svc.getContentResolver().getType(cu);
+                    if (mime == null) mime = "audio/mpeg";
+                    in = new java.io.FileInputStream(pfd.getFileDescriptor());
+                }
                 long start = 0, end = size - 1;
                 if (range != null && range.startsWith("bytes=")) {
                     String[] parts = range.substring(6).split("-", 2);
@@ -225,7 +325,6 @@ public class JamService extends Service {
                     try { if (parts.length > 1 && !parts[1].isEmpty()) end = Math.min(Long.parseLong(parts[1]), size - 1); } catch (Exception ignored) {}
                 }
                 long len = end - start + 1;
-                InputStream in = new java.io.FileInputStream(pfd.getFileDescriptor());
                 //noinspection ResultOfMethodCallIgnored
                 in.skip(start);
                 InputStream capped = new CappedStream(in, len);
