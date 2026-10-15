@@ -1,0 +1,65 @@
+name: build-apk
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install + init Capacitor android
+        run: |
+          npm install
+          if [ ! -d android ]; then npx cap add android; fi
+          npx cap sync android || true
+
+      - name: Apply songjam native patch (bg server auto-start on Stream)
+        run: |
+          APPID=$(node -p "require('./capacitor.config.json').appId")
+          echo "appId=$APPID"
+          PKGPATH=$(echo $APPID | tr . /)
+          DEST="android/app/src/main/java/$PKGPATH"
+          mkdir -p "$DEST"
+          # copy our JamService + MainActivity, rewrite package to match appId
+          for f in android-patch/app/src/main/java/com/chris7777/songjam/*.java; do
+            bn=$(basename $f)
+            sed "s/package com.chris7777.songjam;/package $APPID;/" "$f" > "$DEST/$bn"
+          done
+          mkdir -p android/app/src/main/res/xml
+          cp android-patch/app/src/main/res/xml/network_security_config.xml android/app/src/main/res/xml/
+          # manifest: cleartext + service + permissions
+          M="android/app/src/main/AndroidManifest.xml"
+          grep -q "READ_MEDIA_AUDIO" "$M" || sed -i 's|</manifest>|    <uses-permission android:name="android.permission.INTERNET" />\n    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />\n    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />\n    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />\n    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />\n    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />\n    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />\n</manifest>|' "$M"
+          grep -q "networkSecurityConfig" "$M" || sed -i 's|android:label="@string/app_name"|android:label="@string/app_name"\n        android:networkSecurityConfig="@xml/network_security_config"\n        android:usesCleartextTraffic="true"|' "$M"
+          grep -q "JamService" "$M" || sed -i "s|</application>|        <service android:name=\"$APPID.JamService\" android:exported=\"false\" android:foregroundServiceType=\"mediaPlayback\" />\n    </application>|" "$M"
+          # gradle dep: nanohttpd
+          grep -q "nanohttpd" android/app/build.gradle || echo "    implementation 'org.nanohttpd:nanohttpd:2.3.1'" >> /tmp/dep.txt
+          if grep -q "nanohttpd" android/app/build.gradle; then echo ok; else
+            awk '/dependencies \{/{print; print "    implementation '\''org.nanohttpd:nanohttpd:2.3.1'\''"; next}1' android/app/build.gradle > /tmp/bg && mv /tmp/bg android/app/build.gradle
+          fi
+          echo "--- manifest snippet ---"; grep -A2 -B2 "JamService\|cleartext\|READ_MEDIA" "$M" | head -n 40
+
+      - name: Build debug APK
+        run: |
+          cd android
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: songjam-debug-apk
+          path: android/app/build/outputs/apk/debug/app-debug.apk
