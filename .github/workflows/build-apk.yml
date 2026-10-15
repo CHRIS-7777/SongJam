@@ -19,7 +19,19 @@ jobs:
           distribution: temurin
           java-version: 17
 
-      - uses: android-actions/setup-android@v3
+      - name: Install Android SDK (manual, no third-party action)
+        run: |
+          export ANDROID_HOME=$HOME/Android/sdk ANDROID_SDK_ROOT=$HOME/Android/sdk
+          mkdir -p $ANDROID_HOME/cmdline-tools
+          curl -L -o /tmp/cmdtools.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          rm -rf $ANDROID_HOME/cmdline-tools/latest && mkdir -p $ANDROID_HOME/cmdline-tools/latest
+          unzip -q /tmp/cmdtools.zip -d /tmp/ct && mv /tmp/ct/cmdline-tools/* $ANDROID_HOME/cmdline-tools/latest/
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> $GITHUB_ENV
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          yes | sdkmanager --licenses > /dev/null
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Install + init Capacitor android
         run: |
@@ -47,8 +59,7 @@ jobs:
           grep -q "networkSecurityConfig" "$M" || sed -i 's|android:label="@string/app_name"|android:label="@string/app_name"\n        android:networkSecurityConfig="@xml/network_security_config"\n        android:usesCleartextTraffic="true"|' "$M"
           grep -q "JamService" "$M" || sed -i "s|</application>|        <service android:name=\"$APPID.JamService\" android:exported=\"false\" android:foregroundServiceType=\"mediaPlayback\" />\n    </application>|" "$M"
           # gradle dep: nanohttpd
-          grep -q "nanohttpd" android/app/build.gradle || echo "    implementation 'org.nanohttpd:nanohttpd:2.3.1'" >> /tmp/dep.txt
-          if grep -q "nanohttpd" android/app/build.gradle; then echo ok; else
+          if grep -q "nanohttpd" android/app/build.gradle; then echo nanohttpd-ok; else
             awk '/dependencies \{/{print; print "    implementation '\''org.nanohttpd:nanohttpd:2.3.1'\''"; next}1' android/app/build.gradle > /tmp/bg && mv /tmp/bg android/app/build.gradle
           fi
           echo "--- manifest snippet ---"; grep -A2 -B2 "JamService\|cleartext\|READ_MEDIA" "$M" | head -n 40
