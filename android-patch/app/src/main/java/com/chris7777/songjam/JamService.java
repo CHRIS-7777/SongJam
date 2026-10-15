@@ -50,6 +50,7 @@ public class JamService extends Service {
     public static int PORT = PORT_DEFAULT;
     public static String PIN = null;
     public static JamHttpd HTTPD = null;
+    static JamService INST = null;
 
     // jam state (same as server.py)
     public static String songId = null;
@@ -67,6 +68,7 @@ public class JamService extends Service {
     @Override
     public void onCreate() {
         super.onCreate();
+        INST = this;
         SharedPreferences sp = getSharedPreferences("songjam", MODE_PRIVATE);
         PIN = sp.getString("pin", null);
         if (PIN == null) {
@@ -88,9 +90,9 @@ public class JamService extends Service {
 
     public static synchronized void startHttpd(int port) {
         PORT = port;
-        if (HTTPD != null) return;
+        if (HTTPD != null || INST == null) return;
         try {
-            HTTPD = new JamHttpd(port);
+            HTTPD = new JamHttpd(INST, port);
             HTTPD.start(NanoHTTPD.SOCKET_READ_TIMEOUT, false);
         } catch (Exception e) { HTTPD = null; }
     }
@@ -141,8 +143,9 @@ public class JamService extends Service {
         return out;
     }
 
-    class JamHttpd extends NanoHTTPD {
-        JamHttpd(int port) { super(port); }
+    static class JamHttpd extends NanoHTTPD {
+        final JamService svc;
+        JamHttpd(JamService svc, int port) { super(port); this.svc = svc; }
         @Override public Response serve(IHTTPSession s) {
             String uri = s.getUri();
             Method m = s.getMethod();
@@ -151,12 +154,12 @@ public class JamService extends Service {
                 if (uri.equals("/api/info")) {
                     JSONObject o = new JSONObject();
                     o.put("ip", hotspotIp()); o.put("port", PORT); o.put("pin", PIN);
-                    o.put("songs", querySongs().size());
+                    o.put("songs", svc.querySongs().size());
                     return json(o);
                 }
                 if (uri.equals("/api/songs")) {
                     JSONArray arr = new JSONArray();
-                    for (Song sg : querySongs()) {
+                    for (Song sg : svc.querySongs()) {
                         JSONObject o = new JSONObject();
                         o.put("id", sg.id); o.put("name", sg.name); o.put("file", sg.file); o.put("size", sg.size);
                         arr.put(o);
@@ -176,7 +179,7 @@ public class JamService extends Service {
                     s.parseBody(files);
                     String body = files.get("postData");
                     JSONObject b = new JSONObject(body == null ? "{}" : body);
-                    if (!PIN.equals(String.valueOf(b.opt("pin", "")))) return jsonErr("wrong pin", 403);
+                    if (!PIN.equals(String.valueOf(b.optString("pin", "")))) return jsonErr("wrong pin", 403);
                     synchronized (JamService.class) {
                         String nid = b.isNull("songId") ? null : b.optString("songId", null);
                         if (nid != null && !nid.equals(songId) && !b.has("position")) basePosition = 0.0;
@@ -211,9 +214,9 @@ public class JamService extends Service {
         Response serveTrack(String id, String range) {
             try {
                 Uri cu = ContentUris.withAppendedId(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, Long.parseLong(id));
-                ParcelFileDescriptor pfd = getContentResolver().openFileDescriptor(cu, "r");
+                ParcelFileDescriptor pfd = svc.getContentResolver().openFileDescriptor(cu, "r");
                 long size = pfd.getStatSize();
-                String mime = getContentResolver().getType(cu);
+                String mime = svc.getContentResolver().getType(cu);
                 if (mime == null) mime = "audio/mpeg";
                 long start = 0, end = size - 1;
                 if (range != null && range.startsWith("bytes=")) {
@@ -238,7 +241,7 @@ public class JamService extends Service {
         }
         Response serveAsset(String uri) {
             try {
-                AssetManager am = getAssets();
+                AssetManager am = svc.getAssets();
                 String p = uri.equals("/") || uri.isEmpty() ? "public/index.html" : "public" + uri;
                 // try www/ then public/ (capacitor copies webDir to both on some versions)
                 for (String cand : new String[]{p, uri.equals("/") ? "www/index.html" : "www" + uri}) {
