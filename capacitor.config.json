@@ -1,1 +1,1 @@
-{"appId": "com.chris7777.songjam", "appName": "songjam", "backgroundColor": "#070707", "webDir": "www"}
+{"appId": "com.chris7777.songjam", "appName": "songjam", "backgroundColor": "#070707", "server": {"androidScheme": "http", "cleartext": true}, "webDir": "www"}
