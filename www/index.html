@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"/>
+<title>songjam — Local Music Jam</title>
+<meta name="theme-color" content="#070707"/>
+<meta name="mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+<link rel="manifest" href="manifest.json"/>
+<link rel="icon" type="image/svg+xml" href="icons/icon.svg"/>
+<link rel="apple-touch-icon" href="icons/icon.svg"/>
+<link rel="stylesheet" href="style.css"/>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="logo">
+      <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
+        <path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 10v4" stroke="#06130b" stroke-width="2.4" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <div class="brand">
+      <h1>Song<span>Jam</span></h1>
+      <p>local music jam</p>
+    </div>
+    <div class="live" id="livePill"><span class="dot"></span><span id="liveTxt">offline</span></div>
+  </header>
+
+  <!-- HOME -->
+  <div id="screen-home" class="screen">
+    <div class="hero">
+      <div class="hero-art">♪</div>
+      <h2>Listen together,<br/>no internet.</h2>
+      <p>Open app → Stream → pick a song from your phone → everyone on your hotspot hears it.</p>
+    </div>
+    <div class="home-grid">
+      <button class="home-card host" id="goHost">
+        <span class="hc-icon">🔴</span>
+        <span class="hc-title">Start a Jam</span>
+        <span class="hc-sub">You stream • friends listen</span>
+      </button>
+      <button class="home-card" id="goJoin">
+        <span class="hc-icon">🔗</span>
+        <span class="hc-title">Join a Jam</span>
+        <span class="hc-sub">Hear host's song in sync</span>
+      </button>
+    </div>
+    <div class="hint">1. Host ON Hotspot &nbsp;•&nbsp; 2. Friends join WiFi &nbsp;•&nbsp; 3. Play. No cloud, no login.</div>
+  </div>
+
+  <!-- HOST -->
+  <div id="screen-host" class="screen" style="display:none">
+    <div class="jam">
+      <div class="row" style="justify-content:space-between">
+        <div><label>Jam address</label><br/><code id="jamAddr">…</code></div>
+        <div style="text-align:right"><label>Host PIN</label><br/><span class="pin" id="jamPin">••••</span></div>
+      </div>
+      <button class="stream-btn" id="streamBtn">🔴 &nbsp;Stream a song from my phone</button>
+      <input type="file" id="shareFile" accept="audio/*,.m4a,.mp3,.opus,.ogg,.wav,.flac" style="display:none"/>
+      <div class="hint" id="shareStatus">Tap Stream → pick any song from your local music → it plays for everyone joined.</div>
+    </div>
+    <div class="section-title">On this device <span id="songCount"></span></div>
+    <div class="search">🔍 <input id="search" placeholder="Search songs on this phone…"/></div>
+    <div class="list" id="songList"></div>
+  </div>
+
+  <!-- JOIN -->
+  <div id="screen-join" class="screen" style="display:none">
+    <div class="joinbox">
+      <label>Host address <span style="color:#666">(shown on host phone)</span></label>
+      <input id="hostAddr" placeholder="e.g. 192.168.43.1:8080"/>
+      <div class="btnrow">
+        <button class="btn primary" id="joinBtn">Connect & Listen</button>
+      </div>
+      <div class="hint">Stay on host hotspot. You follow host — play / pause / next is controlled by host. Earphones = best feel.</div>
+    </div>
+    <div class="section-title">Playing now</div>
+    <div class="list" id="remoteList"></div>
+    <div class="btnrow"><button class="btn ghost" id="leaveBtn">Leave jam</button></div>
+  </div>
+
+</div>
+
+<!-- bottom nav like a real APK -->
+<nav class="bottomnav">
+  <button class="bn active" data-go="home">🏠<span>Home</span></button>
+  <button class="bn" data-go="host">🔴<span>Stream</span></button>
+  <button class="bn" data-go="join">🔗<span>Join</span></button>
+</nav>
+
+<div class="player">
+  <div class="inner">
+    <div class="track">
+      <span class="tt" id="nowPlaying">Nothing playing</span>
+      <span class="badge off" id="syncBadge">idle</span>
+    </div>
+    <div class="controls">
+      <button class="cbtn" id="prevBtn">⏮</button>
+      <button class="cbtn play" id="playBtn">▶</button>
+      <button class="cbtn" id="nextBtn">⏭</button>
+      <input type="range" id="vol" min="0" max="100" value="90" style="accent-color:#1DB954;width:90px"/>
+    </div>
+    <div class="progress"><i id="bar"></i></div>
+    <div class="time"><span id="tCur">0:00</span><span id="tDur">0:00</span></div>
+  </div>
+</div>
+
+<audio id="audio" preload="auto"></audio>
+<script src="native-bridge.js"></script>
+<script src="app.js"></script>
+<script>if('serviceWorker' in navigator){navigator.serviceWorker.register('sw.js').catch(()=>{});}</script>
+</body>
+</html>

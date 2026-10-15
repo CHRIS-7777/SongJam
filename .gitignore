@@ -1,0 +1,18 @@
+# songjam pure-APK — no songs, no local builds in repo
+Music/*.mp3
+Music/*.m4a
+Music/*.opus
+Music/*.ogg
+Music/*.wav
+Music/*.flac
+Music/.shared/*
+!Music/.gitkeep
+!Music/.shared/.gitkeep
+
+.env
+node_modules/
+android/
+*.apk
+.DS_Store
+*.keystore
+local.properties

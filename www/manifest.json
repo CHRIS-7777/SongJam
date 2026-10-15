@@ -1,0 +1,1 @@
+{"background_color": "#070707", "description": "songjam — play local songs together on hotspot, no internet.", "display": "standalone", "icons": [{"purpose": "any", "sizes": "512x512", "src": "icons/icon.svg", "type": "image/svg+xml"}], "name": "songjam", "orientation": "portrait", "scope": "./", "short_name": "songjam", "start_url": "./index.html", "theme_color": "#070707"}
