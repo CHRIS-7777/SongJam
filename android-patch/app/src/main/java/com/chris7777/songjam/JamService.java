@@ -217,6 +217,11 @@ public class JamService extends Service {
             String uri = s.getUri();
             Method m = s.getMethod();
             try {
+                // CORS preflight: host WebView POSTs JSON cross-origin (localhost -> LAN IP),
+                // so every state/share POST is preceded by OPTIONS. Must answer 200 + allow headers.
+                if (m == Method.OPTIONS) {
+                    return cors(newFixedLengthResponse(Response.Status.OK, "text/plain", "ok"));
+                }
                 if (uri.equals("/api/time")) return json(new JSONObject().put("t", System.currentTimeMillis() / 1000.0));
                 if (uri.equals("/api/info")) {
                     JSONObject o = new JSONObject();
@@ -289,26 +294,30 @@ public class JamService extends Service {
                     return json(new JSONObject().put("ok", true).put("id", "shared/" + dest.getName()));
                 }
                 if (uri.startsWith("/stream/") && m == Method.GET) {
-                    if (!authed(s)) return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "wrong pin");
+                    if (!authed(s)) return cors(newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "wrong pin"));
                     String id = uri.substring("/stream/".length());
                     return serveTrack(id, s.getHeaders().get("range"));
                 }
                 if (uri.startsWith("/api/")) return jsonErr("not found", 404);
                 return serveAsset(uri);
             } catch (Exception e) {
-                return newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "err");
+                return cors(newFixedLengthResponse(Response.Status.INTERNAL_ERROR, "text/plain", "err"));
             }
+        }
+        Response cors(Response r) {
+            r.addHeader("Access-Control-Allow-Origin", "*");
+            r.addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+            r.addHeader("Access-Control-Allow-Headers", "Content-Type, X-Jam-Pin, Range");
+            return r;
         }
         Response json(JSONObject o) {
             Response r = newFixedLengthResponse(Response.Status.OK, "application/json", o.toString());
-            r.addHeader("Access-Control-Allow-Origin", "*");
-            return r;
+            return cors(r);
         }
         Response jsonErr(String e, int code) {
             Response.Status st = code == 403 ? Response.Status.FORBIDDEN : Response.Status.BAD_REQUEST;
             Response r = newFixedLengthResponse(st, "application/json", "{\"ok\":false,\"err\":\"" + e + "\"}");
-            r.addHeader("Access-Control-Allow-Origin", "*");
-            return r;
+            return cors(r);
         }
         /** PIN gate for joiners: ?pin= or X-Jam-Pin header. Host UI gets PIN via native bridge. */
         boolean authed(IHTTPSession s) {
@@ -358,11 +367,11 @@ public class JamService extends Service {
                 Response r = newFixedLengthResponse(start == 0 && len == size ? Response.Status.OK : Response.Status.PARTIAL_CONTENT, mime, capped, len);
                 r.addHeader("Accept-Ranges", "bytes");
                 if (r.getStatus() == Response.Status.PARTIAL_CONTENT) r.addHeader("Content-Range", "bytes " + start + "-" + end + "/" + size);
-                return r;
+                return cors(r);
             } catch (FileNotFoundException fnf) {
-                return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found");
+                return cors(newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found"));
             } catch (Exception e) {
-                return newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found");
+                return cors(newFixedLengthResponse(Response.Status.NOT_FOUND, "text/plain", "not found"));
             }
         }
         Response serveAsset(String uri) {
@@ -382,7 +391,7 @@ public class JamService extends Service {
                         byte[] buf = new byte[8192]; int n;
                         while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
                         in.close();
-                        return newFixedLengthResponse(Response.Status.OK, mime, new java.io.ByteArrayInputStream(bos.toByteArray()), bos.size());
+                        return cors(newFixedLengthResponse(Response.Status.OK, mime, new java.io.ByteArrayInputStream(bos.toByteArray()), bos.size()));
                     } catch (Exception ignored) {}
                 }
                 InputStream in = am.open("public/index.html");
@@ -390,9 +399,9 @@ public class JamService extends Service {
                 byte[] buf = new byte[8192]; int n;
                 while ((n = in.read(buf)) > 0) bos.write(buf, 0, n);
                 in.close();
-                return newFixedLengthResponse(Response.Status.OK, "text/html", new java.io.ByteArrayInputStream(bos.toByteArray()), bos.size());
+                return cors(newFixedLengthResponse(Response.Status.OK, "text/html", new java.io.ByteArrayInputStream(bos.toByteArray()), bos.size()));
             } catch (Exception e) {
-                return newFixedLengthResponse(Response.Status.OK, "text/html", "<h1>songjam running — open Host page</h1>");
+                return cors(newFixedLengthResponse(Response.Status.OK, "text/html", "<h1>songjam running — open Host page</h1>"));
             }
         }
     }
