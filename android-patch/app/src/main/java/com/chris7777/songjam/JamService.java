@@ -107,20 +107,33 @@ public class JamService extends Service {
     @Override public IBinder onBind(Intent i) { return null; }
 
     public static String hotspotIp() {
+        List<String> ips = hotspotIps();
+        return ips.isEmpty() ? "192.168.43.1" : ips.get(0);
+    }
+
+    /** All site-local IPv4s, hotspot subnets first — host shows every candidate. */
+    public static List<String> hotspotIps() {
+        List<String> c43 = new ArrayList<>(), c192 = new ArrayList<>(),
+                c172 = new ArrayList<>(), c10 = new ArrayList<>(), other = new ArrayList<>();
         try {
             Enumeration<NetworkInterface> nis = NetworkInterface.getNetworkInterfaces();
-            String fallback = null;
             for (NetworkInterface ni : Collections.list(nis)) {
+                try { if (!ni.isUp() || ni.isLoopback()) continue; } catch (Exception ignored) { continue; }
                 for (InetAddress a : Collections.list(ni.getInetAddresses())) {
-                    if (a instanceof Inet4Address && !a.isLoopbackAddress()) {
-                        String ip = a.getHostAddress();
-                        if (ip.startsWith("192.168.43.") || ip.startsWith("192.168.49.")) return ip;
-                        if (ip.startsWith("192.168.")) fallback = ip;
-                    }
+                    if (!(a instanceof Inet4Address) || a.isLoopbackAddress()) continue;
+                    String ip = a.getHostAddress();
+                    if (ip == null) continue;
+                    if (ip.startsWith("192.168.43.") || ip.startsWith("192.168.49.")) { if (!c43.contains(ip)) c43.add(ip); }
+                    else if (ip.startsWith("192.168.")) { if (!c192.contains(ip)) c192.add(ip); }
+                    else if (ip.startsWith("172.")) { if (!c172.contains(ip)) c172.add(ip); }
+                    else if (ip.startsWith("10.")) { if (!c10.contains(ip)) c10.add(ip); }
+                    else if (!a.isLinkLocalAddress()) { if (!other.contains(ip)) other.add(ip); }
                 }
             }
-            return fallback != null ? fallback : "192.168.43.1";
-        } catch (Exception e) { return "192.168.43.1"; }
+        } catch (Exception ignored) {}
+        List<String> all = new ArrayList<>();
+        all.addAll(c43); all.addAll(c192); all.addAll(c172); all.addAll(c10); all.addAll(other);
+        return all;
     }
 
     static class Song { String id, name, file; long size; Song(String i,String n,String f,long s){id=i;name=n;file=f;size=s;} }
@@ -207,12 +220,16 @@ public class JamService extends Service {
                 if (uri.equals("/api/time")) return json(new JSONObject().put("t", System.currentTimeMillis() / 1000.0));
                 if (uri.equals("/api/info")) {
                     JSONObject o = new JSONObject();
-                    o.put("ip", hotspotIp()); o.put("port", PORT); o.put("pin", PIN);
+                    o.put("ip", hotspotIp()); o.put("port", PORT);
                     o.put("songs", svc.querySongs().size());
                     o.put("audioPerm", svc.hasAudioPerm());
+                    JSONArray iparr = new JSONArray();
+                    for (String x : hotspotIps()) iparr.put(x + ":" + PORT);
+                    o.put("ips", iparr);
                     return json(o);
                 }
                 if (uri.equals("/api/songs")) {
+                    if (!authed(s)) return jsonErr("wrong pin", 403);
                     JSONArray arr = new JSONArray();
                     for (Song sg : svc.querySongs()) {
                         JSONObject o = new JSONObject();
@@ -222,6 +239,7 @@ public class JamService extends Service {
                     return json(new JSONObject().put("songs", arr));
                 }
                 if (uri.equals("/api/state") && m == Method.GET) {
+                    if (!authed(s)) return jsonErr("wrong pin", 403);
                     JSONObject o = new JSONObject();
                     o.put("songId", songId == null ? JSONObject.NULL : songId);
                     o.put("playing", playing);
@@ -271,6 +289,7 @@ public class JamService extends Service {
                     return json(new JSONObject().put("ok", true).put("id", "shared/" + dest.getName()));
                 }
                 if (uri.startsWith("/stream/") && m == Method.GET) {
+                    if (!authed(s)) return newFixedLengthResponse(Response.Status.FORBIDDEN, "text/plain", "wrong pin");
                     String id = uri.substring("/stream/".length());
                     return serveTrack(id, s.getHeaders().get("range"));
                 }
@@ -290,6 +309,14 @@ public class JamService extends Service {
             Response r = newFixedLengthResponse(st, "application/json", "{\"ok\":false,\"err\":\"" + e + "\"}");
             r.addHeader("Access-Control-Allow-Origin", "*");
             return r;
+        }
+        /** PIN gate for joiners: ?pin= or X-Jam-Pin header. Host UI gets PIN via native bridge. */
+        boolean authed(IHTTPSession s) {
+            try {
+                String got = queryParams(s.getQueryParameterString()).get("pin");
+                if (got == null) got = s.getHeaders().get("x-jam-pin");
+                return PIN != null && PIN.equals(got);
+            } catch (Exception e) { return false; }
         }
         static String mimeFor(String name) {
             String n = name.toLowerCase();

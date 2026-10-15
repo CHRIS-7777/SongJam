@@ -33,11 +33,25 @@ const fmt = s => {
 };
 
 async function api(path, opts={}) {
-  const base = (mode === 'host' && nativeBase) ? nativeBase : (baseURL || '');
-  const url = base + path;
-  const r = await fetch(url, opts);
-  if (!r.ok) throw new Error(r.status);
-  return r.json();
+  let base = baseURL || '';
+  let q = '';
+  const needsPin = path.startsWith('/api/songs') || path.startsWith('/api/state');
+  if (mode === 'host' && nativeBase) {
+    base = nativeBase;
+    if (needsPin && pin) q = '?pin=' + encodeURIComponent(pin);
+  } else if (mode === 'join' && baseURL) {
+    base = baseURL;
+    if (needsPin && pin) q = '?pin=' + encodeURIComponent(pin);
+  }
+  const url = base + path + q;
+  const { timeoutMs, ...fetchOpts } = opts;
+  let ctrl = null, t = null;
+  try {
+    if (timeoutMs) { ctrl = new AbortController(); t = setTimeout(() => ctrl.abort(), timeoutMs); }
+    const r = await fetch(url, { ...fetchOpts, signal: ctrl ? ctrl.signal : undefined });
+    if (!r.ok) throw new Error(String(r.status));
+    return r.json();
+  } finally { if (t) clearTimeout(t); }
 }
 
 // ---------- APK-style navigation: Home > Stream > Pick Song ----------
@@ -68,13 +82,25 @@ async function loadInfo(){
   try{
     const info = await api('/api/info');
     $('jamAddr').textContent = `${info.ip}:${info.port}`;
-    $('jamPin').textContent = info.pin;
-    pin = info.pin;
+    if(info.pin){ pin = info.pin; $('jamPin').textContent = info.pin; }
     window.__SJ_PERM = (info.audioPerm !== false);
+    window.__SJ_IPS = info.ips || [];
+    renderAltIps();
     $('livePill').classList.add('on');
     $('liveTxt').textContent = `${info.songs} songs`;
     if(mode === 'host' && !songs.length) renderSongs(songs);
   }catch(e){ $('jamAddr').textContent = 'server offline'; }
+}
+function renderAltIps(){
+  const el = $('altIps');
+  if(!el) return;
+  const ips = window.__SJ_IPS || [];
+  const primary = $('jamAddr') ? $('jamAddr').textContent : '';
+  const others = ips.filter(x => x && x !== primary);
+  if(others.length){
+    el.style.display = '';
+    el.innerHTML = 'Joiner stuck? Also try: ' + others.map(escapeHtml).join(' &nbsp;•&nbsp; ');
+  } else { el.style.display = 'none'; el.innerHTML = ''; }
 }
 async function loadSongs(){
   try{
@@ -195,7 +221,8 @@ if (shareInput) shareInput.onchange = async (e)=>{
 function playLocal(id, pos=0, autoplay=true){
   // support subfolders: encode each part, keep slashes; host uses nativeBase in APK
   const hbase = (mode === 'host' && nativeBase) ? nativeBase : (baseURL || '');
-  const streamURL = hbase + '/stream/' + String(id).split('/').map(encodeURIComponent).join('/');
+  let streamURL = hbase + '/stream/' + String(id).split('/').map(encodeURIComponent).join('/');
+  if(pin) streamURL += '?pin=' + encodeURIComponent(pin);
   if(audio.dataset.id !== id){
     audio.dataset.id = id;
     audio.src = streamURL;
@@ -228,10 +255,14 @@ async function startHostLoop(){
 $('joinBtn').onclick = async ()=>{
   let v = $('hostAddr').value.trim();
   if(!v) return alert('Enter host address, e.g. 192.168.43.1:8080');
+  const hp = $('hostPin') ? $('hostPin').value.trim() : '';
+  if(!hp) return alert('Enter the Host PIN shown on the host phone.');
+  pin = hp;
+  currentId = null;
   if(!v.startsWith('http')) v = 'http://' + v;
   baseURL = v.replace(/\/$/, '');
   try{
-    const j = await api('/api/songs');
+    const j = await api('/api/songs', { timeoutMs: 8000 });
     songs = j.songs;
     renderRemote();
     await syncClock();
@@ -239,7 +270,13 @@ $('joinBtn').onclick = async ()=>{
     $('liveTxt').textContent = 'joined ✓';
     $('syncBadge').textContent = 'connected';
     $('syncBadge').className = 'badge sync';
-  }catch(e){ alert('Cannot reach host. Check: same Hotspot WiFi + correct IP.'); }
+  }catch(e){
+    const msg = String((e && e.message) || e);
+    if(e && e.name === 'AbortError') alert('No response from host (8s).\nCheck:\n1. Same Hotspot WiFi\n2. Exact address, incl :8080\n3. Host app open on Stream\n4. Turn OFF mobile data + VPN on this phone, retry');
+    else if(msg.includes('403')) alert('Wrong PIN — check the 4 digits on the host phone and retry.');
+    else if(msg.includes('404')) alert('Host reachable but jam not found. Update both phones to the latest songjam APK.');
+    else alert('Cannot reach host (' + msg + ').\nCheck:\n1. Same Hotspot WiFi\n2. Try the "Also try" addresses on host screen\n3. Host app open, host hotspot ON\n4. Turn OFF mobile data + VPN on this phone');
+  }
 };
 $('leaveBtn').onclick = ()=>{
   baseURL=''; clearInterval(pollTimer);
@@ -276,7 +313,7 @@ function startJoinLoop(){
     if(mode!=='join' || !baseURL) return;
     const t0 = Date.now()/1000;
     let st;
-    try{ st = await api('/api/state'); }catch(e){ setBadge('offline','off'); return; }
+    try{ st = await api('/api/state', { timeoutMs: 8000 }); }catch(e){ setBadge('offline','off'); return; }
     const t1 = Date.now()/1000;
     const rtt = t1 - t0;
     const hostPos = st.position + (rtt/2); // compensate half trip

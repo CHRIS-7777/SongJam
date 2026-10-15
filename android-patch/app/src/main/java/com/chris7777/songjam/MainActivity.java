@@ -11,6 +11,7 @@ import androidx.core.app.ActivityCompat;
 
 import com.getcapacitor.BridgeActivity;
 
+import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
@@ -89,6 +90,9 @@ public class MainActivity extends BridgeActivity {
                 r.put("ip", JamService.hotspotIp());
                 r.put("port", JamService.PORT);
                 r.put("pin", JamService.PIN == null ? "" : JamService.PIN);
+                JSONArray iparr = new JSONArray();
+                for (String x : JamService.hotspotIps()) iparr.put(x + ":" + JamService.PORT);
+                r.put("ips", iparr);
                 return r.toString();
             } catch (Exception e) { return "{\"ip\":\"192.168.43.1\",\"port\":8080,\"pin\":\"\"}"; }
         }

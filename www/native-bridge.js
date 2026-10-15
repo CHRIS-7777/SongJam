@@ -23,7 +23,7 @@
           // Host API lives on the embedded JamService at 127.0.0.1 — never same-origin
           // (Capacitor's own WebView server would return index.html for /api/*).
           const base = 'http://127.0.0.1:' + (r.port || 8080);
-          return { base: base, ip: r.ip, port: r.port || 8080, pin: r.pin || '', native: true };
+          return { base: base, ip: r.ip, ips: r.ips || [], port: r.port || 8080, pin: r.pin || '', native: true };
         }
       } catch (e) { /* fall through to web */ }
     }

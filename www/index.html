@@ -61,6 +61,7 @@
       <button class="stream-btn" id="streamBtn">🔴 &nbsp;Stream a song from my phone</button>
       <input type="file" id="shareFile" accept="audio/*,.m4a,.mp3,.opus,.ogg,.wav,.flac" style="display:none"/>
       <div class="hint" id="shareStatus">Tap Stream → pick any song from your local music → it plays for everyone joined.</div>
+      <div class="hint" id="altIps" style="display:none"></div>
     </div>
     <div class="section-title">On this device <span id="songCount"></span></div>
     <div class="search">🔍 <input id="search" placeholder="Search songs on this phone…"/></div>
@@ -72,6 +73,8 @@
     <div class="joinbox">
       <label>Host address <span style="color:#666">(shown on host phone)</span></label>
       <input id="hostAddr" placeholder="e.g. 192.168.43.1:8080"/>
+      <label style="margin-top:8px;display:block">Host PIN <span style="color:#666">(4 digits on host phone)</span></label>
+      <input id="hostPin" inputmode="numeric" pattern="[0-9]*" placeholder="e.g. 1234"/>
       <div class="btnrow">
         <button class="btn primary" id="joinBtn">Connect & Listen</button>
       </div>
