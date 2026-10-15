@@ -259,8 +259,9 @@ $('joinBtn').onclick = async ()=>{
   if(!hp) return alert('Enter the Host PIN shown on the host phone.');
   pin = hp;
   currentId = null;
-  if(!v.startsWith('http')) v = 'http://' + v;
-  baseURL = v.replace(/\/$/, '');
+  let nv = v.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+  if(!/:\d+$/.test(nv)) nv += ':8080'; // default jam port if omitted
+  baseURL = 'http://' + nv;
   try{
     const j = await api('/api/songs', { timeoutMs: 8000 });
     songs = j.songs;
