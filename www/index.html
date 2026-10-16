@@ -34,7 +34,7 @@
     <div class="hero">
       <div class="hero-art">♪</div>
       <h2>Listen together,<br/>no internet.</h2>
-      <p>Open app → Stream → pick a song from your phone → everyone on your hotspot hears it.</p>
+      <p>Stream → pick a song → everyone on your hotspot hears it.</p>
     </div>
     <div class="home-grid">
       <button class="home-card host" id="goHost">
@@ -48,7 +48,7 @@
         <span class="hc-sub">Hear host's song in sync</span>
       </button>
     </div>
-    <div class="hint">1. Host ON Hotspot &nbsp;•&nbsp; 2. Friends join WiFi &nbsp;•&nbsp; 3. Play. No cloud, no login.</div>
+    <div class="hint">1. Host ON hotspot &nbsp;•&nbsp; 2. Friends join WiFi &nbsp;•&nbsp; 3. Play.</div>
   </div>
 
   <!-- HOST -->
@@ -60,7 +60,7 @@
       </div>
       <button class="stream-btn" id="streamBtn">🔴 &nbsp;Stream a song from my phone</button>
       <input type="file" id="shareFile" accept="audio/*,.m4a,.mp3,.opus,.ogg,.wav,.flac" style="display:none"/>
-      <div class="hint" id="shareStatus">Tap Stream → pick any song from your local music → it plays for everyone joined.</div>
+      <div class="hint" id="shareStatus">Pick any audio file — it goes live for everyone joined.</div>
       <div class="hint" id="altIps" style="display:none"></div>
     </div>
     <div class="section-title">On this device <span id="songCount"></span></div>
@@ -78,11 +78,12 @@
       <div class="btnrow">
         <button class="btn primary" id="joinBtn">Connect & Listen</button>
       </div>
-      <div class="hint">Stay on host hotspot. You follow host — play / pause / next is controlled by host. Earphones = best feel.</div>
+      <div class="hint">You follow the host. Earphones = best feel.</div>
     </div>
-    <div class="section-title">Playing now</div>
-    <div class="list" id="remoteList"></div>
     <div class="btnrow"><button class="btn ghost" id="leaveBtn">Leave jam</button></div>
+    <div class="section-title">Playing now</div>
+    <div class="search">🔍 <input id="rsearch" placeholder="Search this jam…"/></div>
+    <div class="list" id="remoteList"></div>
   </div>
 
 </div>

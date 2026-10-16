@@ -126,19 +126,27 @@ function renderSongs(list){
       };
       return;
     }
-    $('songList').innerHTML = `<div class="empty"><div class="big">🎧</div>No songs on this device yet.<br/>Tap <b>🔴 Stream a song from my phone</b> and pick any audio file — it goes live for everyone.</div>`;
+    $('songList').innerHTML = `<div class="empty"><div class="big">🎧</div>No songs here yet.<br/>Tap <b>🔴 Stream a song from my phone</b> to go live.</div>`;
     return;
   }
   $('songList').innerHTML = '';
   list.forEach(s=>{
     const d = document.createElement('div');
-    d.className = 'song' + (s.id===currentId ? ' paused' : '');
-    d.innerHTML = `<div class="art">🎵</div>
-      <div class="meta"><div class="t">${escapeHtml(s.name)}</div><div class="a">${escapeHtml(s.file)}</div></div>
-      <div class="eq"><i></i><i></i><i></i><i></i></div>`;
+    d.className = 'song' + (s.id===currentId ? ' active' : '');
+    d.innerHTML = rowHTML(s);
     d.onclick = ()=> hostPlay(s.id, 0);
     $('songList').appendChild(d);
   });
+}
+function fmtDur(ms){
+  if(!ms || ms <= 0 || !isFinite(ms)) return '—';
+  return fmt(ms/1000);
+}
+function rowHTML(s){
+  return `<div class="art">🎵</div>
+    <div class="meta"><div class="t">${escapeHtml(s.name)}</div></div>
+    <div class="dur">${fmtDur(s.dur)}</div>
+    <div class="eq"><i></i><i></i><i></i><i></i></div>`;
 }
 function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 
@@ -284,13 +292,21 @@ $('leaveBtn').onclick = ()=>{
   audio.pause(); $('syncBadge').textContent='idle'; $('syncBadge').className='badge off';
   show('home');
 };
+function remoteFiltered(){
+  const q = ($('rsearch') && $('rsearch').value || '').toLowerCase();
+  if(!q) return songs;
+  return songs.filter(s=>(s.name||'').toLowerCase().includes(q));
+}
+if($('rsearch')) $('rsearch').oninput = ()=> renderRemote();
 function renderRemote(){
-  if(!songs.length){ $('remoteList').innerHTML = `<div class="empty">Host has no songs yet.</div>`; return; }
+  if(!songs.length){ $('remoteList').innerHTML = `<div class="empty">No songs from host yet.</div>`; return; }
+  const list = remoteFiltered();
+  if(!list.length){ $('remoteList').innerHTML = `<div class="empty">No match.</div>`; return; }
   $('remoteList').innerHTML = '';
-  songs.forEach(s=>{
+  list.forEach(s=>{
     const d=document.createElement('div');
-    d.className='song'+(s.id===currentId?'':'');
-    d.innerHTML=`<div class="art">🎵</div><div class="meta"><div class="t">${escapeHtml(s.name)}</div><div class="a">${escapeHtml(s.file)}</div></div>`;
+    d.className='song'+(s.id===currentId?' active':'');
+    d.innerHTML=rowHTML(s);
     $('remoteList').appendChild(d);
   });
 }

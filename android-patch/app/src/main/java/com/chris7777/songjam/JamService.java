@@ -136,22 +136,24 @@ public class JamService extends Service {
         return all;
     }
 
-    static class Song { String id, name, file; long size; Song(String i,String n,String f,long s){id=i;name=n;file=f;size=s;} }
+    static class Song { String id, name, file; long size, dur; Song(String i,String n,String f,long s,long d){id=i;name=n;file=f;size=s;dur=d;} }
 
     public List<Song> querySongs() {
         List<Song> out = new ArrayList<>();
         ContentResolver cr = getContentResolver();
         Uri uri = MediaStore.Audio.Media.EXTERNAL_CONTENT_URI;
-        String[] proj = {"_id", "_display_name", "_size"};
+        String[] proj = {"_id", "_display_name", "_size", MediaStore.Audio.Media.DURATION};
         String sel = MediaStore.Audio.Media.IS_MUSIC + "!=0";
         try (Cursor c = cr.query(uri, proj, sel, null, "_display_name ASC")) {
             if (c != null) while (c.moveToNext()) {
                 long id = c.getLong(0);
                 String dn = c.getString(1);
                 long sz = c.getLong(2);
+                long du = 0;
+                try { du = c.getLong(3); } catch (Exception ignored) {}
                 if (dn == null) dn = "track-" + id;
                 String stem = dn.contains(".") ? dn.substring(0, dn.lastIndexOf('.')) : dn;
-                out.add(new Song(String.valueOf(id), stem, dn, sz));
+                out.add(new Song(String.valueOf(id), stem, dn, sz, du));
             }
         } catch (Exception ignored) {}
         // uploads via POST /api/share (streamed by id "shared/<name>")
@@ -164,7 +166,7 @@ public class JamService extends Service {
                     if (!f.isFile()) continue;
                     String dn = f.getName();
                     String stem = dn.contains(".") ? dn.substring(0, dn.lastIndexOf('.')) : dn;
-                    out.add(new Song("shared/" + dn, stem, dn, f.length()));
+                    out.add(new Song("shared/" + dn, stem, dn, f.length(), 0));
                 }
             }
         } catch (Exception ignored) {}
@@ -238,7 +240,7 @@ public class JamService extends Service {
                     JSONArray arr = new JSONArray();
                     for (Song sg : svc.querySongs()) {
                         JSONObject o = new JSONObject();
-                        o.put("id", sg.id); o.put("name", sg.name); o.put("file", sg.file); o.put("size", sg.size);
+                        o.put("id", sg.id); o.put("name", sg.name); o.put("file", sg.file); o.put("size", sg.size); o.put("dur", sg.dur);
                         arr.put(o);
                     }
                     return json(new JSONObject().put("songs", arr));
