@@ -324,6 +324,39 @@ async function syncClock(){
   }
   if(offs.length) clockOffset = offs.sort()[1] ?? offs[0];
 }
+// ---------- join sync: spike-tolerant ----------
+// Phone WiFi routinely spikes RTT 100-300ms (power-save, scans, GC pauses).
+// Reacting to single samples caused false seeks = audible cuts. So:
+// - RTT = median of last 5 polls (spikes ignored)
+// - drift = exponential moving average across polls
+// - any correction needs 2 consecutive over-threshold polls (hysteresis)
+// - hard seek only past 1000ms; gentle 0.99x/1.01x inside 250-1000ms
+// - new track starts audible playback only after 3s buffered (prebuffer)
+const PREBUF_SEC = 3;
+const SEEK_GATE = 1.0;
+const GENTLE_GATE = 0.25;
+const NEED_STRIKES = 2;
+const JOIN_WAIT_MAX = 10; // polls (~10s) before forcing playback anyway
+let rttHist = [];
+let driftSm = 0;
+let corrStrikes = 0;
+let joinReady = false;
+let joinWait = 0;
+
+function median(a){
+  const s = [...a].sort((x,y)=>x-y);
+  const m = Math.floor(s.length/2);
+  return s.length % 2 ? s[m] : (s[m-1]+s[m])/2;
+}
+function bufferedAhead(){
+  try{
+    const b = audio.buffered, t = audio.currentTime || 0;
+    for(let i=0;i<b.length;i++){
+      if(t >= b.start(i)-0.25 && t <= b.end(i)) return b.end(i)-t;
+    }
+  }catch(e){}
+  return 0;
+}
 function startJoinLoop(){
   clearInterval(pollTimer);
   pollTimer = setInterval(async ()=>{
@@ -332,32 +365,55 @@ function startJoinLoop(){
     let st;
     try{ st = await api('/api/state', { timeoutMs: 8000 }); }catch(e){ setBadge('offline','off'); return; }
     const t1 = Date.now()/1000;
-    const rtt = t1 - t0;
-    const hostPos = st.position + (rtt/2); // compensate half trip
+    rttHist.push(t1-t0);
+    if(rttHist.length > 5) rttHist.shift();
+    const hostPos = st.position + (median(rttHist)/2); // spike-proof one-way estimate
     if(!st.songId){ setBadge('waiting…','off'); return; }
 
     if(st.songId !== currentId){
+      // new track: load (muted start), reset smoothing, wait for buffer
       currentId = st.songId;
+      driftSm = 0; corrStrikes = 0; joinReady = false; joinWait = 0;
       const known = songs.find(s=>s.id===st.songId);
       $('nowPlaying').textContent = '♪ ' + (known?known.name:st.songId);
-      playLocal(st.songId, hostPos, st.playing);
+      playLocal(st.songId, hostPos, false);
       renderRemote();
     } else {
-      const drift = hostPos - audio.currentTime;
-      lastSyncMs = Math.abs(drift)*1000;
-      if(st.playing && audio.paused) audio.play().catch(()=>{});
+      if(!joinReady){
+        joinWait++;
+        if(bufferedAhead() >= PREBUF_SEC || audio.readyState >= 4 || joinWait > JOIN_WAIT_MAX){
+          joinReady = true;
+          if(st.playing) audio.play().catch(()=>{});
+        } else {
+          setBadge('buffering…','lag');
+          updatePlayIcon();
+          return;
+        }
+      }
+      const rawDrift = hostPos - (audio.currentTime || 0);
+      driftSm = driftSm*0.6 + rawDrift*0.4;
+      lastSyncMs = Math.abs(driftSm)*1000;
+      if(joinReady && st.playing && audio.paused) audio.play().catch(()=>{});
       if(!st.playing && !audio.paused) audio.pause();
-      if(st.playing && Math.abs(drift) > 0.4){
-        audio.currentTime = hostPos; // re-sync if >400ms off
-      } else if(st.playing && Math.abs(drift) > 0.15){
-        audio.playbackRate = drift > 0 ? 1.03 : 0.97; // gentle catch-up
-      } else {
+      const ad = Math.abs(driftSm);
+      if(!st.playing || ad < GENTLE_GATE){
+        corrStrikes = 0;
         audio.playbackRate = 1.0;
+      } else if(ad > SEEK_GATE){
+        corrStrikes++;
+        if(corrStrikes >= NEED_STRIKES || Math.abs(rawDrift) > 2.5){
+          // >2.5s in one poll can only be a real jump (host restart) — spikes never reach this
+          audio.currentTime = hostPos; // true jump only: >1s off, twice in a row
+          driftSm = 0; corrStrikes = 0;
+        }
+      } else {
+        corrStrikes++;
+        if(corrStrikes >= NEED_STRIKES) audio.playbackRate = driftSm > 0 ? 1.01 : 0.99;
       }
     }
     if(!st.playing) setBadge('paused by host','off');
-    else if(lastSyncMs < 150) setBadge(`synced ✓ ${Math.round(lastSyncMs)}ms`,'sync');
-    else if(lastSyncMs < 400) setBadge(`syncing… ${Math.round(lastSyncMs)}ms`,'lag');
+    else if(lastSyncMs < 250) setBadge(`synced ✓ ${Math.round(lastSyncMs)}ms`,'sync');
+    else if(lastSyncMs < 1000) setBadge(`syncing… ${Math.round(lastSyncMs)}ms`,'lag');
     else setBadge(`lag ${Math.round(lastSyncMs)}ms`,'lag');
     updatePlayIcon();
   }, 1000);
