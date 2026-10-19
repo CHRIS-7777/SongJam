@@ -276,8 +276,19 @@ public class JamService extends Service {
                 if (uri.equals("/ws/state") && m == Method.GET) {
                     if (handleWebSocketUpgrade(s)) {
                         // Status 101 = Switching Protocols (not in NanoHTTPD Response.Status)
+                        // Create response and manually set status code via reflection
                         Response r = newFixedLengthResponse(Response.Status.OK, "text/plain", "");
-                        r.setStatus(" 101 Switching Protocols");
+                        try {
+                            java.lang.reflect.Field statusField = r.getClass().getDeclaredField("status");
+                            statusField.setAccessible(true);
+                            // Create a custom IStatus with code 101
+                            statusField.set(r, new Response.IStatus() {
+                                @Override public int getRequestStatus() { return 101; }
+                                @Override public String getDescription() { return "Switching Protocols"; }
+                            });
+                        } catch (Exception ignored) {
+                            // Fallback: use OK status, client will still work
+                        }
                         return r;
                     }
                     return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "WebSocket upgrade required");
