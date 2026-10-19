@@ -15,6 +15,8 @@ import android.os.Build;
 import android.os.IBinder;
 import android.os.ParcelFileDescriptor;
 import android.provider.MediaStore;
+import android.util.Base64;
+import android.util.Log;
 
 import androidx.core.app.NotificationCompat;
 
@@ -24,18 +26,24 @@ import org.json.JSONObject;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileNotFoundException;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.Set;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 import fi.iki.elonen.NanoHTTPD;
 
@@ -215,10 +223,62 @@ public class JamService extends Service {
     static class JamHttpd extends NanoHTTPD {
         final JamService svc;
         JamHttpd(JamService svc, int port) { super(port); this.svc = svc; }
+
+        // WebSocket clients for real-time state push
+        private final CopyOnWriteArrayList<WebSocketClient> wsClients = new CopyOnWriteArrayList<>();
+
+        static final String WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+        static class WebSocketClient {
+            final java.net.Socket socket;
+            final OutputStream out;
+            final InputStream in;
+            boolean open = true;
+            WebSocketClient(java.net.Socket s) throws IOException {
+                this.socket = s;
+                this.out = s.getOutputStream();
+                this.in = s.getInputStream();
+            }
+            void send(String text) {
+                if (!open) return;
+                try {
+                    byte[] payload = text.getBytes("UTF-8");
+                    // WebSocket frame: FIN=1, opcode=1 (text), mask=0
+                    ByteArrayOutputStream bos = new ByteArrayOutputStream();
+                    bos.write(0x81); // FIN + text frame
+                    if (payload.length < 126) {
+                        bos.write(payload.length);
+                    } else if (payload.length < 65536) {
+                        bos.write(126);
+                        bos.write((payload.length >> 8) & 0xFF);
+                        bos.write(payload.length & 0xFF);
+                    } else {
+                        bos.write(127);
+                        for (int i = 7; i >= 0; i--) bos.write((payload.length >> (i * 8)) & 0xFF);
+                    }
+                    bos.write(payload);
+                    out.write(bos.toByteArray());
+                    out.flush();
+                } catch (IOException e) {
+                    open = false;
+                }
+            }
+            void close() {
+                open = false;
+                try { socket.close(); } catch (IOException ignored) {}
+            }
+        }
         @Override public Response serve(IHTTPSession s) {
             String uri = s.getUri();
             Method m = s.getMethod();
             try {
+                // WebSocket upgrade check
+                if (uri.equals("/ws/state") && m == Method.GET) {
+                    if (handleWebSocketUpgrade(s)) {
+                        return newFixedLengthResponse(Response.Status.SWITCHING_PROTOCOLS, "text/plain", "");
+                    }
+                    return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "WebSocket upgrade required");
+                }
                 // CORS preflight: host WebView POSTs JSON cross-origin (localhost -> LAN IP),
                 // so every state/share POST is preceded by OPTIONS. Must answer 200 + allow headers.
                 if (m == Method.OPTIONS) {
@@ -269,6 +329,8 @@ public class JamService extends Service {
                         if (b.has("playing")) playing = b.optBoolean("playing", false);
                         updatedAt = System.currentTimeMillis();
                     }
+                    // Broadcast state change to all WebSocket clients
+                    broadcastState();
                     return json(new JSONObject().put("ok", true));
                 }
                 if (uri.equals("/api/share") && (m == Method.POST || m == Method.PUT)) {
@@ -328,6 +390,142 @@ public class JamService extends Service {
                 if (got == null) got = s.getHeaders().get("x-jam-pin");
                 return PIN != null && PIN.equals(got);
             } catch (Exception e) { return false; }
+        }
+
+        // WebSocket upgrade handling
+        private boolean handleWebSocketUpgrade(IHTTPSession s) {
+            String upgrade = s.getHeaders().get("upgrade");
+            String connection = s.getHeaders().get("connection");
+            String wsKey = s.getHeaders().get("sec-websocket-key");
+            String wsVersion = s.getHeaders().get("sec-websocket-version");
+
+            if (upgrade == null || !upgrade.equalsIgnoreCase("websocket") ||
+                wsKey == null || wsVersion == null || !wsVersion.equals("13")) {
+                return false;
+            }
+
+            try {
+                String acceptKey = computeWebSocketAccept(wsKey);
+                java.net.Socket socket = (java.net.Socket) s.getHeaders().get("socket");
+                if (socket == null) {
+                    // Try to get socket from NanoHTTPD internals
+                    try {
+                        java.lang.reflect.Field f = s.getClass().getDeclaredField("socket");
+                        f.setAccessible(true);
+                        socket = (java.net.Socket) f.get(s);
+                    } catch (Exception ignored) {}
+                }
+                if (socket == null) return false;
+
+                // Send 101 Switching Protocols
+                String response = "HTTP/1.1 101 Switching Protocols\r\n" +
+                        "Upgrade: websocket\r\n" +
+                        "Connection: Upgrade\r\n" +
+                        "Sec-WebSocket-Accept: " + acceptKey + "\r\n\r\n";
+                socket.getOutputStream().write(response.getBytes("UTF-8"));
+                socket.getOutputStream().flush();
+
+                // Create WebSocket client and start reading frames
+                WebSocketClient client = new WebSocketClient(socket);
+                wsClients.add(client);
+                new Thread(() -> readWebSocketFrames(client)).start();
+                return true;
+            } catch (Exception e) {
+                Log.e("JamService", "WebSocket upgrade failed", e);
+                return false;
+            }
+        }
+
+        private String computeWebSocketAccept(String key) {
+            try {
+                String combined = key + WS_GUID;
+                MessageDigest md = MessageDigest.getInstance("SHA-1");
+                byte[] hash = md.digest(combined.getBytes("UTF-8"));
+                return Base64.encodeToString(hash, Base64.NO_WRAP);
+            } catch (NoSuchAlgorithmException e) {
+                throw new RuntimeException(e);
+            }
+        }
+
+        private void readWebSocketFrames(WebSocketClient client) {
+            try {
+                while (client.open) {
+                    // Read frame header (2 bytes minimum)
+                    int b1 = client.in.read();
+                    if (b1 == -1) break;
+                    int b2 = client.in.read();
+                    if (b2 == -1) break;
+
+                    boolean fin = (b1 & 0x80) != 0;
+                    int opcode = b1 & 0x0F;
+                    boolean masked = (b2 & 0x80) != 0;
+                    int payloadLen = b2 & 0x7F;
+
+                    if (payloadLen == 126) {
+                        payloadLen = (client.in.read() << 8) | client.in.read();
+                    } else if (payloadLen == 127) {
+                        // 64-bit length - skip 8 bytes
+                        for (int i = 0; i < 8; i++) client.in.read();
+                        payloadLen = 0; // We don't handle frames > 65535
+                    }
+
+                    byte[] mask = new byte[4];
+                    if (masked) client.in.read(mask);
+
+                    byte[] payload = new byte[payloadLen];
+                    int read = 0;
+                    while (read < payloadLen) {
+                        int n = client.in.read(payload, read, payloadLen - read);
+                        if (n <= 0) break;
+                        read += n;
+                    }
+                    if (read != payloadLen) break;
+
+                    if (masked) {
+                        for (int i = 0; i < payloadLen; i++) {
+                            payload[i] ^= mask[i % 4];
+                        }
+                    }
+
+                    if (opcode == 0x8) { // Close frame
+                        client.close();
+                        break;
+                    } else if (opcode == 0x9) { // Ping
+                        sendPong(client);
+                    } else if (opcode == 0x1 || opcode == 0x2) { // Text or binary
+                        // Client message - we can ignore for now
+                    }
+                }
+            } catch (IOException ignored) {
+            } finally {
+                client.close();
+                wsClients.remove(client);
+            }
+        }
+
+        private void sendPong(WebSocketClient client) {
+            try {
+                client.out.write(new byte[]{(byte) 0x8A, 0}); // Pong frame
+                client.out.flush();
+            } catch (IOException ignored) {}
+        }
+
+        // Broadcast state to all WebSocket clients
+        void broadcastState() {
+            if (wsClients.isEmpty()) return;
+            try {
+                JSONObject o = new JSONObject();
+                o.put("songId", songId == null ? JSONObject.NULL : songId);
+                o.put("playing", playing);
+                o.put("position", Math.round(currentPosition() * 1000.0) / 1000.0);
+                o.put("serverTime", System.currentTimeMillis() / 1000.0);
+                String msg = o.toString();
+
+                for (WebSocketClient c : wsClients) {
+                    if (c.open) c.send(msg);
+                    else wsClients.remove(c);
+                }
+            } catch (Exception ignored) {}
         }
         static String mimeFor(String name) {
             String n = name.toLowerCase();
