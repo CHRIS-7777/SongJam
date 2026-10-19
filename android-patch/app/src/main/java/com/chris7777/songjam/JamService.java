@@ -44,6 +44,7 @@ import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.nio.charset.StandardCharsets;
 
 import fi.iki.elonen.NanoHTTPD;
 
@@ -471,7 +472,7 @@ public class JamService extends Service {
             try {
                 String combined = key + WS_GUID;
                 MessageDigest md = MessageDigest.getInstance("SHA-1");
-                byte[] hash = md.digest(combined.getBytes("UTF-8"));
+                byte[] hash = md.digest(combined.getBytes(StandardCharsets.UTF_8));
                 return Base64.encodeToString(hash, Base64.NO_WRAP);
             } catch (NoSuchAlgorithmException e) {
                 throw new RuntimeException(e);
