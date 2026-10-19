@@ -275,7 +275,10 @@ public class JamService extends Service {
                 // WebSocket upgrade check
                 if (uri.equals("/ws/state") && m == Method.GET) {
                     if (handleWebSocketUpgrade(s)) {
-                        return newFixedLengthResponse(Response.Status.SWITCHING_PROTOCOLS, "text/plain", "");
+                        // Status 101 = Switching Protocols (not in NanoHTTPD Response.Status)
+                        Response r = newFixedLengthResponse(Response.Status.OK, "text/plain", "");
+                        r.setStatus(" 101 Switching Protocols");
+                        return r;
                     }
                     return newFixedLengthResponse(Response.Status.BAD_REQUEST, "text/plain", "WebSocket upgrade required");
                 }
@@ -406,13 +409,30 @@ public class JamService extends Service {
 
             try {
                 String acceptKey = computeWebSocketAccept(wsKey);
-                java.net.Socket socket = (java.net.Socket) s.getHeaders().get("socket");
+                
+                // Get socket via reflection from NanoHTTPD session
+                java.net.Socket socket = null;
+                try {
+                    // Try to get socket from session via reflection
+                    java.lang.reflect.Field f = s.getClass().getDeclaredField("socket");
+                    f.setAccessible(true);
+                    socket = (java.net.Socket) f.get(s);
+                } catch (Exception ignored) {
+                    // Fallback: try common field names
+                    for (String fieldName : new String[]{"socket", "mSocket", "clientSocket"}) {
+                        try {
+                            java.lang.reflect.Field f = s.getClass().getDeclaredField(fieldName);
+                            f.setAccessible(true);
+                            socket = (java.net.Socket) f.get(s);
+                            if (socket != null) break;
+                        } catch (Exception ignored2) {}
+                    }
+                }
                 if (socket == null) {
-                    // Try to get socket from NanoHTTPD internals
+                    // Last resort: try to get from HTTPD instance
                     try {
-                        java.lang.reflect.Field f = s.getClass().getDeclaredField("socket");
-                        f.setAccessible(true);
-                        socket = (java.net.Socket) f.get(s);
+                        java.lang.reflect.Method getSocketMethod = s.getClass().getMethod("getSocket");
+                        socket = (java.net.Socket) getSocketMethod.invoke(s);
                     } catch (Exception ignored) {}
                 }
                 if (socket == null) return false;
