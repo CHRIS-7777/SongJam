@@ -354,46 +354,47 @@ function bufferedAhead(){
   }catch(e){}
   return 0;
 }
+function setBadge(t,c){ $("syncBadge").textContent=t; $("syncBadge").className="badge "+c; }
+
 function tryConnectWebSocket(url){
   if(ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
   try{
     ws = new WebSocket(url);
-    ws.binaryType = 'text';
+    ws.binaryType = "text";
     ws.onopen = () => {
-      console.log('WebSocket connected');
-      setBadge('synced ✓','sync');
+      console.log("WebSocket connected");
+      setBadge("synced ✓","sync");
     };
     ws.onmessage = (evt) => {
       try{
         const st = JSON.parse(evt.data);
-        handleState(st, 0); // WebSocket: no RTT to compensate
+        handleState(st, 0);
       }catch(e){}
     };
     ws.onclose = () => {
-      console.log('WebSocket closed, reconnecting...');
+      console.log("WebSocket closed, reconnecting...");
       ws = null;
       clearTimeout(wsReconnectTimer);
       wsReconnectTimer = setTimeout(() => tryConnectWebSocket(url), 3000);
     };
     ws.onerror = (err) => {
-      console.log('WebSocket error:', err);
+      console.log("WebSocket error:", err);
     };
   }catch(e){
-    console.log('WebSocket unavailable, using polling');
+    console.log("WebSocket unavailable, using polling");
   }
 }
 
 function handleState(st, rtt){
-  if(!st.songId){ setBadge('waiting…','off'); return; }
+  if(!st.songId){ setBadge("waiting…","off"); return; }
 
-  const hostPos = st.position + (rtt/2); // for polling fallback only
+  const hostPos = st.position + (rtt/2);
 
   if(st.songId !== currentId){
-    // new track: load (muted start), reset smoothing, wait for buffer
     currentId = st.songId;
     driftSm = 0; corrStrikes = 0; joinReady = false; joinWait = 0;
     const known = songs.find(s=>s.id===st.songId);
-    $('nowPlaying').textContent = '♪ ' + (known?known.name:st.songId);
+    $("nowPlaying").textContent = "♪ " + (known?known.name:st.songId);
     playLocal(st.songId, hostPos, false);
     renderRemote();
   } else {
@@ -403,7 +404,7 @@ function handleState(st, rtt){
         joinReady = true;
         if(st.playing) audio.play().catch(()=>{});
       } else {
-        setBadge('buffering…','lag');
+        setBadge("buffering…","lag");
         updatePlayIcon();
         return;
       }
@@ -420,51 +421,34 @@ function handleState(st, rtt){
     } else if(ad > SEEK_GATE){
       corrStrikes++;
       if(corrStrikes >= NEED_STRIKES || Math.abs(rawDrift) > 2.5){
-        audio.currentTime = hostPos; // true jump only: >1s off, twice in a row
+        audio.currentTime = hostPos;
         driftSm = 0; corrStrikes = 0;
       }
     } else {
       corrStrikes++;
       if(corrStrikes >= NEED_STRIKES) audio.playbackRate = driftSm > 0 ? 1.01 : 0.99;
     }
-    if(!st.playing) setBadge('paused by host','off');
-    else if(lastSyncMs < 250) setBadge(`synced ✓ ${Math.round(lastSyncMs)}ms`,'sync');
-    else if(lastSyncMs < 1000) setBadge(`syncing… ${Math.round(lastSyncMs)}ms`,'lag');
-    else setBadge(`lag ${Math.round(lastSyncMs)}ms`,'lag');
+    if(!st.playing) setBadge("paused by host","off");
+    else if(lastSyncMs < 250) setBadge("synced ✓ " + Math.round(lastSyncMs) + "ms","sync");
+    else if(lastSyncMs < 1000) setBadge("syncing… " + Math.round(lastSyncMs) + "ms","lag");
+    else setBadge("lag " + Math.round(lastSyncMs) + "ms","lag");
     updatePlayIcon();
-}
-
-// Helper: median of RTT history (for polling fallback)
-function median(a){
-  const s = [...a].sort((x,y)=>x-y);
-  const m = Math.floor(s.length/2);
-  return s.length % 2 ? s[m] : (s[m-1]+s[m])/2;
-}
-function bufferedAhead(){
-  try{
-    const b = audio.buffered, t = audio.currentTime || 0;
-    for(let i=0;i<b.length;i++){
-      if(t >= b.start(i)-0.25 && t <= b.end(i)) return b.end(i)-t;
-    }
-  }catch(e){}
-  return 0;
+  }
 }
 
 function startJoinLoop(){
   clearInterval(pollTimer);
-  if(mode!=='join' || !baseURL) return;
+  if(mode!=="join" || !baseURL) return;
 
-  // Try WebSocket first
-  const wsUrl = baseURL.replace(/^http/, 'ws') + '/ws/state';
+  const wsUrl = baseURL.replace(/^http/, "ws") + "/ws/state";
   tryConnectWebSocket(wsUrl);
 
-  // Fallback polling (spike-tolerant) if WebSocket fails
   pollTimer = setInterval(async ()=>{
-    if(mode!=='join' || !baseURL) return;
-    if(ws && ws.readyState === WebSocket.OPEN) return; // WebSocket active, skip polling
+    if(mode!=="join" || !baseURL) return;
+    if(ws && ws.readyState === WebSocket.OPEN) return;
     const t0 = Date.now()/1000;
     let st;
-    try{ st = await api('/api/state', { timeoutMs: 8000 }); }catch(e){ setBadge('offline','off'); return; }
+    try{ st = await api("/api/state", { timeoutMs: 8000 }); }catch(e){ setBadge("offline","off"); return; }
     const t1 = Date.now()/1000;
     rttHist.push(t1-t0);
     if(rttHist.length > 5) rttHist.shift();
@@ -472,107 +456,7 @@ function startJoinLoop(){
   }, 1000);
 }
 
-function tryConnectWebSocket(url){
-  if(ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  try{
-    ws = new WebSocket(url);
-    ws.binaryType = 'text';
-    ws.onopen = () => {
-      console.log('WebSocket connected');
-      setBadge('synced ✓','sync');
-    };
-    ws.onmessage = (evt) => {
-      try{
-        const st = JSON.parse(evt.data);
-        handleState(st, 0); // WebSocket: no RTT to compensate
-      }catch(e){}
-    };
-    ws.onclose = () => {
-      console.log('WebSocket closed, reconnecting...');
-      ws = null;
-      clearTimeout(wsReconnectTimer);
-      wsReconnectTimer = setTimeout(() => tryConnectWebSocket(url), 3000);
-    };
-    ws.onerror = (err) => {
-      console.log('WebSocket error:', err);
-    };
-  }catch(e){
-    console.log('WebSocket unavailable, using polling');
-  }
-}
-
-function handleState(st, rtt){
-  if(!st.songId){ setBadge('waiting…','off'); return; }
-
-  const hostPos = st.position + (rtt/2); // for polling fallback only
-
-  if(st.songId !== currentId){
-    // new track: load (muted start), reset smoothing, wait for buffer
-    currentId = st.songId;
-    driftSm = 0; corrStrikes = 0; joinReady = false; joinWait = 0;
-    const known = songs.find(s=>s.id===st.songId);
-    $('nowPlaying').textContent = '♪ ' + (known?known.name:st.songId);
-    playLocal(st.songId, hostPos, false);
-    renderRemote();
-  } else {
-    if(!joinReady){
-      joinWait++;
-      if(bufferedAhead() >= PREBUF_SEC || audio.readyState >= 4 || joinWait > JOIN_WAIT_MAX){
-        joinReady = true;
-        if(st.playing) audio.play().catch(()=>{});
-      } else {
-        setBadge('buffering…','lag');
-        updatePlayIcon();
-        return;
-      }
-    }
-    const rawDrift = hostPos - (audio.currentTime || 0);
-    driftSm = driftSm*0.6 + rawDrift*0.4;
-    lastSyncMs = Math.abs(driftSm)*1000;
-    if(joinReady && st.playing && audio.paused) audio.play().catch(()=>{});
-    if(!st.playing && !audio.paused) audio.pause();
-    const ad = Math.abs(driftSm);
-    if(!st.playing || ad < GENTLE_GATE){
-      corrStrikes = 0;
-      audio.playbackRate = 1.0;
-    } else if(ad > SEEK_GATE){
-      corrStrikes++;
-      if(corrStrikes >= NEED_STRIKES || Math.abs(rawDrift) > 2.5){
-        audio.currentTime = hostPos; // true jump only: >1s off, twice in a row
-        driftSm = 0; corrStrikes = 0;
-      }
-    } else {
-      corrStrikes++;
-      if(corrStrikes >= NEED_STRIKES) audio.playbackRate = driftSm > 0 ? 1.01 : 0.99;
-    }
-    if(!st.playing) setBadge('paused by host','off');
-    else if(lastSyncMs < 250) setBadge(`synced ✓ ${Math.round(lastSyncMs)}ms`,'sync');
-    else if(lastSyncMs < 1000) setBadge(`syncing… ${Math.round(lastSyncMs)}ms`,'lag');
-    else setBadge(`lag ${Math.round(lastSyncMs)}ms`,'lag');
-    updatePlayIcon();
-}
-
-// Helper: median of RTT history (for polling fallback)
-function median(a){
-  const s = [...a].sort((x,y)=>x-y);
-  const m = Math.floor(s.length/2);
-  return s.length % 2 ? s[m] : (s[m-1]+s[m])/2;
-}
-function bufferedAhead(){
-  try{
-    const b = audio.buffered, t = audio.currentTime || 0;
-    for(let i=0;i<b.length;i++){
-      if(t >= b.start(i)-0.25 && t <= b.end(i)) return b.end(i)-t;
-    }
-  }catch(e){}
-  return 0;
-}
-
-function setBadge(t,c){ $('syncBadge').textContent=t; $('syncBadge').className='badge '+c; }
-
 // init — start on Home like a real APK, pre-load host data in background
-show('home'); setMode('host');
+show("home"); setMode("host");
 ensureHostServer().then(()=>{ loadInfo(); loadSongs(); });
 setInterval(loadInfo, 10000);
-}
-}
